@@ -1,5 +1,6 @@
-from sklearn.feature_extraction.text import TfidfTransformer
-from sklearn.feature_extraction.text import CountVectorizer
+
+
+from sklearn.feature_extraction.text import TfidfTransformer, CountVectorizer
 from sklearn.preprocessing import MultiLabelBinarizer
 from sklearn.neural_network import MLPClassifier
 import json
@@ -9,6 +10,8 @@ from sklearn.dummy import DummyClassifier
 from sklearn import svm
 from sklearn.metrics import f1_score, precision_score, recall_score, accuracy_score
 import argparse
+import numpy as np
+from sklearn.feature_extraction import _stop_words
 
 
 def load_data(file):
@@ -36,11 +39,63 @@ def filter_train_features(cards, train_features, test_feature):
     return list(filter(filter_, cards))
 
 
+def train_model():
+    pass
+
+
+def get_train_test_data(test, train_features, test_feature):
+    X = []
+    for card in test:
+        card_features = []
+        for feature in train_features:
+            card_features.append(card[feature])
+        X.append(card_features)
+
+    y = [card[test_feature] for card in test]
+
+    X_train, X_test, y_train, y_test = train_test_split(
+        X, y, test_size=0.2, random_state=2)
+
+    # stop_words are ignored during tokenization
+    english_stop_words = _stop_words.ENGLISH_STOP_WORDS
+    custom_stop_words = ["creature", "card", "target"]
+    extra = ["simic", "rakdos", "gruul", "azorius", "dimir",
+             "selesnya", "izzet", "golgori", "orzhov", "boros"]
+    stop_words = english_stop_words.union(custom_stop_words)
+
+    # compute tf-idf matrix
+    features_to_train = [" ".join(f[:-1]) for f in X_train]
+    count_vect = CountVectorizer(ngram_range=(
+        1, 2), stop_words=stop_words, lowercase=True)
+    X_train_counts = count_vect.fit_transform(features_to_train)
+    tfidf_transformer = TfidfTransformer(
+        smooth_idf=True, sublinear_tf=True, norm=None)
+    X_train_tfidf = tfidf_transformer.fit_transform(X_train_counts)
+
+    # convert color labels to binary
+    mlb = MultiLabelBinarizer()
+    y_train = mlb.fit_transform(y_train)
+    new_y_train = []
+    for i in range(len(y_train)):
+        new_y_train.append("".join(list(map(str, y_train[i]))))
+
+    # process test data
+    features_to_test = [" ".join(f[:-1]) for f in X_test]
+    X_test_counts = count_vect.transform(features_to_test)
+    X_test_tfidf = tfidf_transformer.transform(X_test_counts)
+
+    y_test = mlb.fit_transform(y_test)
+    new_y_test = []
+    for i in range(len(y_test)):
+        new_y_test.append("".join(list(map(str, y_test[i]))))
+
+    return X_train_tfidf, new_y_train, X_test_tfidf, new_y_test, count_vect
+
+
 def main(train_features, test_feature):
     # train_features = [f for f in [args.oracle_text,
     #                               args.name, args.flavor_text] if f != None]
     processed = load_data("cleaned.json")
-    print(len(processed))
 
     # filter cards that don't have specified train features
     filtered_cards = filter_train_features(
@@ -53,38 +108,11 @@ def main(train_features, test_feature):
             if len(x["color_identity"]) <= 1:
                 filtered_monocolored.append(x)
 
-    test = filtered_monocolored
-    # test = filtered_cards
+    # test = filtered_monocolored
+    test = filtered_cards
 
-    X = []
-    for card in test:
-        card_features = []
-        for feature in train_features:
-            card_features.append(card[feature])
-        X.append(card_features)
-
-    print(len(X))
-
-    y = [card[test_feature] for card in test]
-
-    X_train, X_test, y_train, y_test = train_test_split(
-        X, y, test_size=0.2, random_state=0)
-
-    # get tf-idf counts
-    features_to_train = [" ".join(f[:-1]) for f in X_train]
-    print(features_to_train[47])
-    print(X_train[47])
-    count_vect = CountVectorizer()
-    X_train_counts = count_vect.fit_transform(features_to_train)
-    tfidf_transformer = TfidfTransformer()
-    X_train_tfidf = tfidf_transformer.fit_transform(X_train_counts)
-
-    # convert color labels to binary
-    mlb = MultiLabelBinarizer()
-    y_train = mlb.fit_transform(y_train)
-    new_y_train = []
-    for i in range(len(y_train)):
-        new_y_train.append("".join(list(map(str, y_train[i]))))
+    X_train, y_train, X_test, y_test, count_vect = get_train_test_data(
+        test, train_features, test_feature)
 
     # train the model
     clf = MultinomialNB()
@@ -92,30 +120,37 @@ def main(train_features, test_feature):
     # clf = svm.SVC(decision_function_shape='ovo')
     # clf = svm.LinearSVC()
     # clf = MLPClassifier()
-    clf.fit(X_train_tfidf, new_y_train)
+    clf.fit(X_train, y_train)
     # clf.fit(X_train_counts, new_y_train)
 
-    # process test data
-    # flavor_test = [f[0] for f in X_test]
-    features_to_test = [" ".join(f[:-1]) for f in X_test]
-    X_test_counts = count_vect.transform(features_to_test)
-    X_test_tfidf = tfidf_transformer.transform(X_test_counts)
-
-    y_test = mlb.fit_transform(y_test)
-    new_y_test = []
-    for i in range(len(y_test)):
-        new_y_test.append("".join(list(map(str, y_test[i]))))
-
     # classify test data
-    predictions = clf.predict(X_test_tfidf)
+    predictions = clf.predict(X_test)
+
+    # for prediction in predictions:
+    #     c = 0
+    #     for x in prediction:
+    #         c += int(x)
+
+    #     if c > 1:
+    #         print(prediction)
 
     f1, accuracy, precision, recall = calculate_metrics(
-        predictions, new_y_test)
+        predictions, y_test)
 
+    print("\n----------Model Metrics----------")
     print(f"f1: {f1}")
     print(f"accuracy: {accuracy}")
     print(f"precision: {precision}")
     print(f"recall: {recall}")
+
+    print("\n----------Most Relevant Features Per Class----------")
+    print(clf.classes_)
+
+    # print most important features for each class
+    for i in range(len(clf.classes_)):
+        zipped = list(zip(count_vect.get_feature_names_out(),
+                      clf.feature_log_prob_[i]))
+        print(sorted(zipped, key=lambda x: x[1], reverse=True)[:3])
 
     # def evaluate(tokens, reference_file, hypothesis_file, verbose=0):
     # reference = set([int(x.rstrip()) for x in reference_file])
