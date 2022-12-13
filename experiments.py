@@ -5,52 +5,56 @@ from sklearn.neural_network import MLPClassifier
 import json
 from sklearn.naive_bayes import MultinomialNB, BernoulliNB
 from sklearn.model_selection import train_test_split
+from sklearn.dummy import DummyClassifier
+from sklearn import svm
+from sklearn.metrics import f1_score, precision_score, recall_score, accuracy_score
 import argparse
 
 
-def process_data(file):
-    data = None
-    with open(file) as json_data:
-        data = json.loads(json_data.read())
+def load_data(file):
+    with open(file) as data:
+        return json.loads(data.read())
 
-    wanted_keys = ["name", "mana_cost", "cmc", "type_line", "oracle_text", "colors",
-                   "color_identity", "legalities", "reserved", "reprint", "set_name", "keywords", "flavor_text"]
-    processed = []
-    for card in data:
-        processed_card = {your_key: card[your_key]
-                          for your_key in wanted_keys if your_key in card.keys()}
-        processed.append(processed_card)
-    for card in processed:
-        if "color_identity" in card.keys() and card["color_identity"] == []:
-            card["color_identity"] = ['C']
-        if "colors" in card.keys() and card["colors"] == []:
-            card["colors"] = ['C']
-    return processed
+
+def calculate_metrics(y_pred, y_true):
+    f1 = f1_score(y_true, y_pred, average="macro")
+    precision = precision_score(y_true, y_pred, average="macro")
+    recall = recall_score(y_true, y_pred, average="macro")
+    accuracy = accuracy_score(y_true, y_pred)
+    return f1, accuracy, precision, recall
+
+
+def filter_train_features(cards, train_features, test_feature):
+    features = train_features
+    features.append(test_feature)
+
+    def filter_(card):
+        for feature in features:
+            if feature not in card.keys():
+                return False
+        return True
+    return list(filter(filter_, cards))
 
 
 def main(train_features, test_feature):
     # train_features = [f for f in [args.oracle_text,
     #                               args.name, args.flavor_text] if f != None]
-    processed = process_data("oracle-cards-20221130100205.json")
+    processed = load_data("cleaned.json")
+    print(len(processed))
 
     # filter cards that don't have specified train features
-    def filter_train_features(card):
-        for feature in train_features:
-            if feature not in card.keys():
-                return False
-        return True
-    cards_with_flavor = list(
-        filter(filter_train_features, processed))
+    filtered_cards = filter_train_features(
+        processed, train_features, test_feature)
 
     # filter out multi-colored cards
-    flavor_monocolored = []
-    for x in cards_with_flavor:
+    filtered_monocolored = []
+    for x in filtered_cards:
         if "color_identity" in x.keys():
             if len(x["color_identity"]) <= 1:
-                flavor_monocolored.append(x)
+                filtered_monocolored.append(x)
 
-    test = flavor_monocolored
-    # test = cards_with_flavor
+    test = filtered_monocolored
+    # test = filtered_cards
 
     X = []
     for card in test:
@@ -59,15 +63,19 @@ def main(train_features, test_feature):
             card_features.append(card[feature])
         X.append(card_features)
 
+    print(len(X))
+
     y = [card[test_feature] for card in test]
 
     X_train, X_test, y_train, y_test = train_test_split(
-        X, y, test_size=0.5, random_state=0)
+        X, y, test_size=0.2, random_state=0)
 
     # get tf-idf counts
-    flavor = [f[0] for f in X_train]
+    features_to_train = [" ".join(f[:-1]) for f in X_train]
+    print(features_to_train[47])
+    print(X_train[47])
     count_vect = CountVectorizer()
-    X_train_counts = count_vect.fit_transform(flavor)
+    X_train_counts = count_vect.fit_transform(features_to_train)
     tfidf_transformer = TfidfTransformer()
     X_train_tfidf = tfidf_transformer.fit_transform(X_train_counts)
 
@@ -79,11 +87,18 @@ def main(train_features, test_feature):
         new_y_train.append("".join(list(map(str, y_train[i]))))
 
     # train the model
-    clf = MultinomialNB().fit(X_train_tfidf, new_y_train)
+    clf = MultinomialNB()
+    # clf = DummyClassifier(strategy="most_frequent")
+    # clf = svm.SVC(decision_function_shape='ovo')
+    # clf = svm.LinearSVC()
+    # clf = MLPClassifier()
+    clf.fit(X_train_tfidf, new_y_train)
+    # clf.fit(X_train_counts, new_y_train)
 
     # process test data
-    flavor_test = [f[0] for f in X_test]
-    X_test_counts = count_vect.transform(flavor_test)
+    # flavor_test = [f[0] for f in X_test]
+    features_to_test = [" ".join(f[:-1]) for f in X_test]
+    X_test_counts = count_vect.transform(features_to_test)
     X_test_tfidf = tfidf_transformer.transform(X_test_counts)
 
     y_test = mlb.fit_transform(y_test)
@@ -94,16 +109,13 @@ def main(train_features, test_feature):
     # classify test data
     predictions = clf.predict(X_test_tfidf)
 
-    # calculate accuracy
-    total = 0
-    correct = 0
-    for i in range(len(predictions)):
-        print(X_test[i], new_y_test[i], predictions[i], mlb.classes_)
-        if predictions[i] == new_y_test[i]:
-            correct += 1
-        total += 1
+    f1, accuracy, precision, recall = calculate_metrics(
+        predictions, new_y_test)
 
-    print(correct/total)
+    print(f"f1: {f1}")
+    print(f"accuracy: {accuracy}")
+    print(f"precision: {precision}")
+    print(f"recall: {recall}")
 
     # def evaluate(tokens, reference_file, hypothesis_file, verbose=0):
     # reference = set([int(x.rstrip()) for x in reference_file])
@@ -121,31 +133,6 @@ def main(train_features, test_feature):
     # recall = len(true_positives) / len(reference)
     # f = 2*precision*recall/(precision+recall)
 
-    # if verbose >= 1:
-    #     words = tokens
-    #     if verbose == 2:
-    #         for i in true_positives:
-    #             concordance(words, i, 'TP')
-    #         for i in true_negatives:
-    #             concordance(words, i, 'TN')
-    #     else:
-    #         for i in false_positives:
-    #             concordance(words, i, 'FP')
-    #         for i in false_negatives:
-    #             concordance(words, i, 'FN')
-
-    # print("TP: {:7d}".format(len(true_positives)), end="")
-    # print("\tFN: {:7d}".format(len(false_negatives)))
-
-    # print("FP: {:7d}".format(len(false_positives)), end="")
-    # print("\tTN: {:7d}".format(len(true_negatives)))
-
-    # print()
-
-    # print("PRECISION: {:5.2%}".format(precision), end="")
-    # print("\tRECALL: {:5.2%}".format(recall), end="")
-    # print("\tF: {:5.2%}".format(f))
-
 
 if __name__ == "__main__":
     # parser = argparse.ArgumentParser()
@@ -158,5 +145,5 @@ if __name__ == "__main__":
     # parser.add_argument("-c", "--test_feature",
     #                     choices=["colors", "color_identity", "type_line"], default="color_identity")
     # args = parser.parse_args()
-    main(["flavor_text", "name", "oracle_text"], "color_identity")
+    main(["flavor_text", "oracle_text", "name", "type_line"], "color_identity")
     # main(args)
