@@ -12,6 +12,10 @@ from sklearn.metrics import f1_score, precision_score, recall_score, accuracy_sc
 import argparse
 import numpy as np
 from sklearn.feature_extraction import _stop_words
+from sklearn.multioutput import MultiOutputClassifier
+from sklearn.tree import DecisionTreeClassifier
+from sklearn.ensemble import RandomForestClassifier
+from collections import Counter
 
 
 def load_data(file):
@@ -21,7 +25,8 @@ def load_data(file):
 
 def calculate_metrics(y_pred, y_true):
     f1 = f1_score(y_true, y_pred, average="macro")
-    precision = precision_score(y_true, y_pred, average="macro")
+    # precision = precision_score(y_true, y_pred, average="macro")
+    precision = 0
     recall = recall_score(y_true, y_pred, average="macro")
     accuracy = accuracy_score(y_true, y_pred)
     return f1, accuracy, precision, recall
@@ -92,6 +97,17 @@ def get_train_test_data(test, train_features, test_feature):
     return X_train_tfidf, new_y_train, X_test_tfidf, new_y_test, count_vect
 
 
+def convert_binary_to_colors(binary_color):
+    colors = ['B', 'C', 'G', 'R', 'U', 'W']
+
+    color_identity = ""
+    for i in range(6):
+        if binary_color[i] == "1":
+            color_identity += colors[i]
+
+    return color_identity
+
+
 def main(train_features, test_feature):
     # train_features = [f for f in [args.oracle_text,
     #                               args.name, args.flavor_text] if f != None]
@@ -116,13 +132,14 @@ def main(train_features, test_feature):
 
     # train the model
     clf = MultinomialNB()
+    # clf = DecisionTreeClassifier()
+    # clf = RandomForestClassifier()
     # clf = DummyClassifier(strategy="most_frequent")
     # clf = svm.SVC(decision_function_shape='ovo')
     # clf = svm.LinearSVC()
     # clf = MLPClassifier()
     clf.fit(X_train, y_train)
     # clf.fit(X_train_counts, new_y_train)
-
     # classify test data
     predictions = clf.predict(X_test)
 
@@ -137,6 +154,11 @@ def main(train_features, test_feature):
     f1, accuracy, precision, recall = calculate_metrics(
         predictions, y_test)
 
+    print("\n----------Dataset Class Counts----------")
+    class_counts = {convert_binary_to_colors(
+        key): value for key, value in dict(Counter(y_train) + Counter(y_test)).items()}
+    print(class_counts)
+
     print("\n----------Model Metrics----------")
     print(f"f1: {f1}")
     print(f"accuracy: {accuracy}")
@@ -144,29 +166,11 @@ def main(train_features, test_feature):
     print(f"recall: {recall}")
 
     print("\n----------Most Relevant Features Per Class----------")
-    print(clf.classes_)
-
-    # print most important features for each class
     for i in range(len(clf.classes_)):
         zipped = list(zip(count_vect.get_feature_names_out(),
                       clf.feature_log_prob_[i]))
-        print(sorted(zipped, key=lambda x: x[1], reverse=True)[:3])
-
-    # def evaluate(tokens, reference_file, hypothesis_file, verbose=0):
-    # reference = set([int(x.rstrip()) for x in reference_file])
-    # hypothesis = set([int(x.rstrip()) for x in hypothesis_file])
-    # all_tokens = set(range(len(tokens)))
-
-    # # Compute confusion matrix
-    # true_positives = hypothesis & reference
-    # true_negatives = all_tokens - (hypothesis | reference)
-    # false_positives = hypothesis - reference
-    # false_negatives = reference - hypothesis
-
-    # # Compute precision, recall, F1
-    # precision = len(true_positives) / len(hypothesis)
-    # recall = len(true_positives) / len(reference)
-    # f = 2*precision*recall/(precision+recall)
+        print(sorted(zipped, key=lambda x: x[1], reverse=True)[
+              :3], convert_binary_to_colors(clf.classes_[i]))
 
 
 if __name__ == "__main__":
