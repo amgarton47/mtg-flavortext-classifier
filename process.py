@@ -9,17 +9,6 @@ def process_data(file):
     wanted_keys = ["name", "mana_cost", "cmc", "type_line", "oracle_text", "colors",
                    "color_identity", "legalities", "reserved", "reprint", "set_name", "keywords", "flavor_text"]
 
-    # def contains_all_keys(card):
-    #     for key in wanted_keys:
-    #         if key not in card.keys():
-    #             return False
-    #     return True
-
-    # wanted_data = []
-    # for item in data:
-    #     if contains_all_keys(item):
-    #         wanted_data.append(item)
-
     processed = []
     for card in data:
         processed_card = {your_key: card[your_key]
@@ -31,27 +20,14 @@ def process_data(file):
         if "colors" in card.keys() and card["colors"] == []:
             card["colors"] = ['C']
 
-    # cards = [json.dumps(card) for card in processed]
-    # print(cards)
-    with open("cleaned.json", "w") as outfile:
-        # outfile.write(cards)
+    with open("cleaned_new.json", "w") as outfile:
         json.dump(processed, outfile, indent=4)
-    # return processed
 
 
-# json_object = json.dumps(dictionary, indent=4)
-process_data("oracle-cards-20221130100205.json")
+# process_data("oracle-cards-20221130100205.json")
+process_data("oracle-cards-20221215220238.json")  # newer data (12/15/2022)
 
 
 def load_data(file):
     with open(file) as data:
         return json.loads(data.read())
-
-
-# print(load_data("cleaned.json")[47])
-# for card in load_data("cleaned.json"):
-#     tally = 0
-#     if "flavor_text" not in card.keys():
-#         tally += 1
-
-# print(tally)

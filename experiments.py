@@ -8,30 +8,33 @@ from sklearn.naive_bayes import MultinomialNB, BernoulliNB
 from sklearn.model_selection import train_test_split
 from sklearn.dummy import DummyClassifier
 from sklearn import svm
-from sklearn.metrics import f1_score, precision_score, recall_score, accuracy_score
-import argparse
+from sklearn.metrics import f1_score, precision_score, recall_score, accuracy_score, confusion_matrix
 import numpy as np
 from sklearn.feature_extraction import _stop_words
-from sklearn.multioutput import MultiOutputClassifier
 from sklearn.tree import DecisionTreeClassifier
 from sklearn.ensemble import RandomForestClassifier
 from collections import Counter
 
 
+# read in json data from pre-processed file
 def load_data(file):
     with open(file) as data:
         return json.loads(data.read())
 
 
+# calculate and return performance metrics given predictions and true labels
 def calculate_metrics(y_pred, y_true):
-    f1 = f1_score(y_true, y_pred, average="macro")
-    # precision = precision_score(y_true, y_pred, average="macro")
-    precision = 0
-    recall = recall_score(y_true, y_pred, average="macro")
+    f1 = f1_score(y_true, y_pred, average="macro", labels=np.unique(y_pred))
+    precision = precision_score(
+        y_true, y_pred, labels=np.unique(y_pred), average="macro")
+    recall = recall_score(y_true, y_pred, average="macro",
+                          labels=np.unique(y_pred))
     accuracy = accuracy_score(y_true, y_pred)
-    return f1, accuracy, precision, recall
+    conf_matrix = confusion_matrix(y_true, y_pred)
+    return f1, accuracy, precision, recall, conf_matrix
 
 
+# return card data, filtering out unwanted features
 def filter_train_features(cards, train_features, test_feature):
     features = train_features
     features.append(test_feature)
@@ -44,10 +47,7 @@ def filter_train_features(cards, train_features, test_feature):
     return list(filter(filter_, cards))
 
 
-def train_model():
-    pass
-
-
+# prepares train and test data by performing feature exraction and transformation
 def get_train_test_data(test, train_features, test_feature):
     X = []
     for card in test:
@@ -58,15 +58,17 @@ def get_train_test_data(test, train_features, test_feature):
 
     y = [card[test_feature] for card in test]
 
+    # create 80-20 split
     X_train, X_test, y_train, y_test = train_test_split(
         X, y, test_size=0.2, random_state=2)
 
     # stop_words are ignored during tokenization
     english_stop_words = _stop_words.ENGLISH_STOP_WORDS
-    custom_stop_words = ["creature", "card", "target"]
+    custom_stop_words = ["creature", "card",
+                         "target", "control", "turn", "creatures"]
     extra = ["simic", "rakdos", "gruul", "azorius", "dimir",
-             "selesnya", "izzet", "golgori", "orzhov", "boros"]
-    stop_words = english_stop_words.union(custom_stop_words)
+             "selesnya", "izzet", "golgari", "orzhov", "boros", "bant", "esper", "grixis", "jund", "naya", "abzan", "jeskai", "sultai", "mardu", "temur"]
+    stop_words = english_stop_words.union(custom_stop_words).union(extra)
 
     # compute tf-idf matrix
     features_to_train = [" ".join(f[:-1]) for f in X_train]
@@ -97,6 +99,7 @@ def get_train_test_data(test, train_features, test_feature):
     return X_train_tfidf, new_y_train, X_test_tfidf, new_y_test, count_vect
 
 
+# converts character color_identity representation into binary
 def convert_binary_to_colors(binary_color):
     colors = ['B', 'C', 'G', 'R', 'U', 'W']
 
@@ -108,27 +111,45 @@ def convert_binary_to_colors(binary_color):
     return color_identity
 
 
+# transforms binary string into binary digit
+def numberify(string):
+    num = []
+    for c in string:
+        num.append(int(c))
+    return num
+
+
+# calcualtes and returns the hamming score given predictions and true labels
+def hamming(y_pred, y_true):
+    temp = 0
+    for i in range(len(y_true)):
+        true = numberify(y_true[i])
+        pred = numberify(y_pred[i])
+        a = np.logical_and(true, pred)
+        b = np.logical_or(true, pred)
+        temp += sum(a) / sum(b)
+    return temp / len(y_true)
+
+
 def main(train_features, test_feature):
-    # train_features = [f for f in [args.oracle_text,
-    #                               args.name, args.flavor_text] if f != None]
-    processed = load_data("cleaned.json")
+    processed = load_data("cleaned_new.json")
 
     # filter cards that don't have specified train features
     filtered_cards = filter_train_features(
         processed, train_features, test_feature)
 
     # filter out multi-colored cards
-    filtered_monocolored = []
-    for x in filtered_cards:
-        if "color_identity" in x.keys():
-            if len(x["color_identity"]) <= 1:
-                filtered_monocolored.append(x)
+    # filtered_monocolored = []
+    # for x in filtered_cards:
+    #     if "color_identity" in x.keys():
+    #         if len(x["color_identity"]) <= 1:
+    #             filtered_monocolored.append(x)
 
-    # test = filtered_monocolored
-    test = filtered_cards
+    # cards = filtered_monocolored
+    cards = filtered_cards
 
     X_train, y_train, X_test, y_test, count_vect = get_train_test_data(
-        test, train_features, test_feature)
+        cards, train_features, test_feature)
 
     # train the model
     clf = MultinomialNB()
@@ -139,50 +160,36 @@ def main(train_features, test_feature):
     # clf = svm.LinearSVC()
     # clf = MLPClassifier()
     clf.fit(X_train, y_train)
-    # clf.fit(X_train_counts, new_y_train)
+
     # classify test data
     predictions = clf.predict(X_test)
-
-    # for prediction in predictions:
-    #     c = 0
-    #     for x in prediction:
-    #         c += int(x)
-
-    #     if c > 1:
-    #         print(prediction)
-
-    f1, accuracy, precision, recall = calculate_metrics(
-        predictions, y_test)
 
     print("\n----------Dataset Class Counts----------")
     class_counts = {convert_binary_to_colors(
         key): value for key, value in dict(Counter(y_train) + Counter(y_test)).items()}
     print(class_counts)
 
+    print(predictions)
+
     print("\n----------Model Metrics----------")
+    f1, accuracy, precision, recall, conf_matrix = calculate_metrics(
+        predictions, y_test)
     print(f"f1: {f1}")
     print(f"accuracy: {accuracy}")
     print(f"precision: {precision}")
     print(f"recall: {recall}")
+    print("hamming:", hamming(predictions, y_test))
+    # print(conf_matrix)
+    # print(conf_matrix.diagonal()/conf_matrix.sum(axis=1))
 
-    print("\n----------Most Relevant Features Per Class----------")
-    for i in range(len(clf.classes_)):
-        zipped = list(zip(count_vect.get_feature_names_out(),
-                      clf.feature_log_prob_[i]))
-        print(sorted(zipped, key=lambda x: x[1], reverse=True)[
-              :3], convert_binary_to_colors(clf.classes_[i]))
+    if type(clf).__name__ == "MultinomialNB":
+        print("\n----------Most Relevant Features Per Class----------")
+        for i in range(len(clf.classes_)):
+            zipped = list(zip(count_vect.get_feature_names_out(),
+                              clf.feature_log_prob_[i]))
+            print(sorted(zipped, key=lambda x: x[1], reverse=True)[
+                :3], convert_binary_to_colors(clf.classes_[i]))
 
 
 if __name__ == "__main__":
-    # parser = argparse.ArgumentParser()
-    # parser.add_argument("-f", "--flavor_text",
-    #                     help="Use flavor text as a training feature")
-    # parser.add_argument("-n", "--name",
-    #                     help="Use card name as a training feature")
-    # parser.add_argument("-o", "--oracle_text",
-    #                     help="Use oracle text as a training feature")
-    # parser.add_argument("-c", "--test_feature",
-    #                     choices=["colors", "color_identity", "type_line"], default="color_identity")
-    # args = parser.parse_args()
     main(["flavor_text", "oracle_text", "name", "type_line"], "color_identity")
-    # main(args)
